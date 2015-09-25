@@ -3,11 +3,12 @@
 __author__ = "Bertrand Janin <b@janin.com>"
 __version__ = "0.1.6"
 
-import pdb
+#import pdb
 import socket
 import threading
 import sys
 import traceback
+from IPython.core.debugger import BdbQuit_excepthook, Tracer, Pdb
 
 
 class FileObjectWrapper(object):
@@ -25,7 +26,7 @@ class FileObjectWrapper(object):
         return attr
 
 
-class Rpdb(pdb.Pdb):
+class Rpdb(Pdb):
 
     def __init__(self, addr="127.0.0.1", port=4444):
         """Initialize the socket and initialize pdb."""
@@ -50,9 +51,15 @@ class Rpdb(pdb.Pdb):
 
         (clientsocket, address) = self.skt.accept()
         handle = clientsocket.makefile('rw')
-        pdb.Pdb.__init__(self, completekey='tab',
-                         stdin=FileObjectWrapper(handle, self.old_stdin),
-                         stdout=FileObjectWrapper(handle, self.old_stdin))
+
+        if sys.excepthook != BdbQuit_excepthook:
+            BdbQuit_excepthook.excepthook_ori = sys.excepthook
+            sys.excepthook = BdbQuit_excepthook
+
+        Pdb.__init__(self, completekey='tab',
+                     stdin=FileObjectWrapper(handle, self.old_stdin),
+                     stdout=FileObjectWrapper(handle, self.old_stdin))
+        # super(Rpdb, self).__init__()
         sys.stdout = sys.stdin = handle
         OCCUPIED.claim(port, sys.stdout)
 
@@ -66,7 +73,7 @@ class Rpdb(pdb.Pdb):
     def do_continue(self, arg):
         """Clean-up and do underlying continue."""
         try:
-            return pdb.Pdb.do_continue(self, arg)
+            return Pdb.do_continue(self, arg)
         finally:
             self.shutdown()
 
@@ -75,7 +82,7 @@ class Rpdb(pdb.Pdb):
     def do_quit(self, arg):
         """Clean-up and do underlying quit."""
         try:
-            return pdb.Pdb.do_quit(self, arg)
+            return Pdb.do_quit(self, arg)
         finally:
             self.shutdown()
 
@@ -84,7 +91,7 @@ class Rpdb(pdb.Pdb):
     def do_EOF(self, arg):
         """Clean-up and do underlying EOF."""
         try:
-            return pdb.Pdb.do_EOF(self, arg)
+            return Pdb.do_EOF(self, arg)
         finally:
             self.shutdown()
 
@@ -107,12 +114,13 @@ def set_trace(addr="127.0.0.1", port=4444):
             raise
     try:
         debugger.set_trace(sys._getframe().f_back)
+        # debugger()
     except Exception:
         traceback.print_exc()
 
 
 def post_mortem(addr="127.0.0.1", port=4444):
-    
+
     debugger = Rpdb(addr=addr, port=port)
     type, value, tb = sys.exc_info()
     traceback.print_exc()
