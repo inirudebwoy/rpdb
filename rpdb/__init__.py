@@ -3,12 +3,12 @@
 __author__ = "Bertrand Janin <b@janin.com>"
 __version__ = "0.1.6"
 
-#import pdb
+# import pdb
 import socket
 import threading
 import sys
 import traceback
-from IPython.core.debugger import BdbQuit_excepthook, Tracer, Pdb
+from IPython.core.debugger import Pdb
 
 
 class FileObjectWrapper(object):
@@ -52,16 +52,65 @@ class Rpdb(Pdb):
         (clientsocket, address) = self.skt.accept()
         handle = clientsocket.makefile('rw')
 
-        if sys.excepthook != BdbQuit_excepthook:
-            BdbQuit_excepthook.excepthook_ori = sys.excepthook
-            sys.excepthook = BdbQuit_excepthook
-
-        Pdb.__init__(self, completekey='tab',
+        Pdb.__init__(self, color_scheme='Linux', completekey='tab',
                      stdin=FileObjectWrapper(handle, self.old_stdin),
                      stdout=FileObjectWrapper(handle, self.old_stdin))
-        # super(Rpdb, self).__init__()
+        handle.write("writing to handle")
+        def import_module(possible_modules, needed_module):
+            """Make it more resilient to different versions of IPython and try to
+            find a module."""
+            count = len(possible_modules)
+            for module in possible_modules:
+                sys.stderr.write(module)
+
+                try:
+                    return __import__(module, fromlist=[needed_module])
+                except ImportError:
+                    count -= 1
+                    if count == 0:
+                        raise
+
+        possible_modules = ['IPython.terminal.ipapp',           # Newer IPython
+                            'IPython.frontend.terminal.ipapp']  # Older IPython
+
+        app = import_module(possible_modules, "TerminalIPythonApp")
+        TerminalIPythonApp = app.TerminalIPythonApp
+
+        possible_modules = ['IPython.terminal.embed',           # Newer IPython
+                            'IPython.frontend.terminal.embed']  # Older IPython
+        embed = import_module(possible_modules, "InteractiveShellEmbed")
+        InteractiveShellEmbed = embed.InteractiveShellEmbed
+
+        try:
+            get_ipython
+        except NameError:
+            # Build a terminal app in order to force ipython to load the
+            # configuration
+            ipapp = TerminalIPythonApp()
+            # Avoid output (banner, prints)
+            ipapp.interact = False
+            ipapp.initialize()
+            def_colors = ipapp.shell.colors
+        else:
+            # If an instance of IPython is already running try to get an instance
+            # of the application. If there is no TerminalIPythonApp instanciated
+            # the instance method will create a new one without loading the config.
+            # i.e: if we are in an embed instance we do not want to load the config.
+            ipapp = TerminalIPythonApp.instance()
+            shell = get_ipython()
+            def_colors = shell.colors
+
+            # Detect if embed shell or not and display a message
+            if isinstance(shell, InteractiveShellEmbed):
+                shell.write_err(
+                    "\nYou are currently into an embedded ipython shell,\n"
+                    "the configuration will not be loaded.\n\n"
+                )
+
+        self.rcLines += [line + '\n' for line in ipapp.exec_lines]
         sys.stdout = sys.stdin = handle
         OCCUPIED.claim(port, sys.stdout)
+        sys.stderr.write(str(self.rcLines))
 
     def shutdown(self):
         """Revert stdin and stdout, close the socket."""
